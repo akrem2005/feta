@@ -41,6 +41,7 @@
       let localStream;
       let remoteStream;
       let peerConnection;
+      let room;
 
       startButton.addEventListener("click", start);
       callButton.addEventListener("click", call);
@@ -76,13 +77,18 @@
           peerConnection.addTrack(track, localStream);
         });
 
+        room = "room1";
+
         peerConnection
           .createOffer()
           .then((offer) => {
             return peerConnection.setLocalDescription(offer);
           })
           .then(() => {
-            // send the offer to the remote peer
+            socket.emit("join", {
+              room,
+              user: peerConnection.localDescription,
+            });
           })
           .catch((error) => {
             console.error("Failed to create session description:", error);
@@ -91,7 +97,11 @@
 
       function handleIceCandidate(event) {
         if (event.candidate) {
-          // send the candidate to the remote peer
+          socket.emit("candidate", {
+            room,
+            sender: peerConnection.localDescription,
+            candidate,
+          });
         }
       }
 
