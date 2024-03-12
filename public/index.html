@@ -3,124 +3,139 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC Video Chat</title>
+    <title>Video Chat</title>
     <style>
       body {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
         display: flex;
         justify-content: center;
         align-items: center;
         height: 100vh;
-        margin: 0;
         background-color: #f0f0f0;
+      }
+      .video-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        height: 100%;
       }
       video {
         width: 300px;
         height: 200px;
-        border: 1px solid black;
-      }
-      button {
-        margin-top: 10px;
+        object-fit: cover;
       }
     </style>
   </head>
   <body>
-    <div id="app">
+    <div class="video-container">
       <video id="localVideo" autoplay muted></video>
       <video id="remoteVideo" autoplay></video>
-      <button id="startButton">Start</button>
-      <button id="callButton">Call</button>
-      <button id="hangupButton">Hang Up</button>
     </div>
+    <script src="/socket.io/socket.io.js"></script>
     <script>
+      const socket = io();
       const localVideo = document.getElementById("localVideo");
       const remoteVideo = document.getElementById("remoteVideo");
-      const startButton = document.getElementById("startButton");
-      const callButton = document.getElementById("callButton");
-      const hangupButton = document.getElementById("hangupButton");
-
       let localStream;
-      let remoteStream;
       let peerConnection;
       let room;
 
-      startButton.addEventListener("click", start);
-      callButton.addEventListener("click", call);
-      hangupButton.addEventListener("click", hangup);
+      navigator.mediaDevices
+        .getUserMedia({ video: true, audio: true })
+        .then((stream) => {
+          localStream = stream;
+          localVideo.srcObject = stream;
+        });
 
-      async function start() {
-        const constraints = {
-          video: true,
-          audio: true,
-        };
-        localStream = await navigator.mediaDevices.getUserMedia(constraints);
-        localVideo.srcObject = localStream;
+      function joinRoom(room) {
+        socket.emit("join room", room);
       }
 
-      function call() {
-        callButton.disabled = true;
-        hangupButton.disabled = false;
+      socket.on("call user", async (data) => {
+        const { signal, from, name } = data;
+        console.log("calling user", from);
+        const callResponse = confirm(
+          `${name} is calling you. Do you want to accept the call?`
+        );
+        if (callResponse) {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+          remoteVideo.srcObject = stream;
+          const configuration = {
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+          };
+          peerConnection = new RTCPeerConnection(configuration);
+          peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+              socket.emit("call accepted", {
+                signal: event.candidate,
+                to: from,
+              });
+            }
+          };
+          peerConnection.ontrack = (event) => {
+            remoteVideo.srcObject = event.streams[0];
+          };
+          localStream.getTracks().forEach((track) => {
+            peerConnection.addTrack(track, localStream);
+          });
+          peerConnection.setRemoteDescription(
+            new RTCSessionDescription(signal)
+          );
+          const answer = await peerConnection.createAnswer();
+          await peerConnection.setLocalDescription(answer);
+          socket.emit("call accepted", {
+            signal: peerConnection.localDescription,
+            to: from,
+          });
+        }
+      });
 
+      socket.on("chat message", (msg) => {
+        console.log("message:", msg);
+      });
+
+      socket.on("call accepted", async (data) => {
+        const { signal } = data;
+        console.log("call accepted");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+        remoteVideo.srcObject = stream;
         const configuration = {
-          iceServers: [
-            {
-              urls: "stun:stun.l.google.com:19302",
-            },
-          ],
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         };
-
         peerConnection = new RTCPeerConnection(configuration);
-
-        peerConnection.addEventListener("icecandidate", handleIceCandidate);
-        peerConnection.addEventListener("track", handleRemoteStream);
-
+        peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            socket.emit("call accepted", {
+              signal: event.candidate,
+              to: data.from,
+            });
+          }
+        };
+        peerConnection.ontrack = (event) => {
+          remoteVideo.srcObject = event.streams[0];
+        };
         localStream.getTracks().forEach((track) => {
           peerConnection.addTrack(track, localStream);
         });
+        peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
+      });
 
-        room = "room1";
+      socket.on("chat message", (msg) => {
+        console.log("message:", msg);
+      });
 
-        peerConnection
-          .createOffer()
-          .then((offer) => {
-            return peerConnection.setLocalDescription(offer);
-          })
-          .then(() => {
-            socket.emit("join", {
-              room,
-              user: peerConnection.localDescription,
-            });
-          })
-          .catch((error) => {
-            console.error("Failed to create session description:", error);
-          });
-      }
-
-      function handleIceCandidate(event) {
-        if (event.candidate) {
-          socket.emit("candidate", {
-            room,
-            sender: peerConnection.localDescription,
-            candidate,
-          });
-        }
-      }
-
-      function handleRemoteStream(event) {
-        remoteVideo.srcObject = event.streams[0];
-      }
-
-      function hangup() {
-        remoteStream.getTracks().forEach((track) => {
-          track.stop();
-        });
-        localStream.getTracks().forEach((track) => {
-          track.stop();
-        });
-        peerConnection.close();
-        peerConnection = null;
-        callButton.disabled = false;
-        hangupButton.disabled = true;
-      }
+      socket.on("disconnect", () => {
+        console.log("disconnected");
+      });
     </script>
   </body>
 </html>

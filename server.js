@@ -1,28 +1,42 @@
-// server.js
-const http = require("http");
-const socketIO = require("socket.io");
+const express = require("express");
+const app = express();
+const server = require("http").createServer(app);
+const io = require("socket.io")(server);
+const path = require("path");
 
-const server = http.createServer();
-const io = socketIO(server);
+app.use(express.static(path.join(__dirname, "public")));
 
-let rooms = {};
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
 
 io.on("connection", (socket) => {
-  socket.on("join", ({ room, user }) => {
-    if (!rooms[room]) {
-      rooms[room] = { users: {} };
-    }
+  console.log("a user connected");
 
-    rooms[room].users[user] = socket.id;
-
+  socket.on("join room", (room) => {
     socket.join(room);
+  });
 
-    socket.on("disconnect", () => {
-      delete rooms[room].users[user];
+  socket.on("chat message", (msg) => {
+    io.to(msg.room).emit("chat message", msg);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("user disconnected");
+  });
+
+  socket.on("call user", (data) => {
+    io.to(data.to).emit("call user", {
+      signal: data.signalData,
+      from: data.from,
+      name: data.name,
     });
+  });
 
-    socket.on("candidate", ({ room, sender, candidate }) => {
-      socket.to(room).to(sender).emit("candidate", { room, sender, candidate });
+  socket.on("accept call", (data) => {
+    io.to(data.to).emit("call accepted", {
+      signal: data.signal,
+      from: data.from,
     });
   });
 });
