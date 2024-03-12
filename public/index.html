@@ -3,96 +3,113 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Video Chat</title>
+    <title>WebRTC Video Chat</title>
     <style>
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        background-color: #f0f0f0;
+      }
       video {
-        max-width: 400px;
-        max-height: 300px;
+        width: 300px;
+        height: 200px;
+        border: 1px solid black;
+      }
+      button {
+        margin-top: 10px;
       }
     </style>
   </head>
   <body>
-    <h1>Video Chat</h1>
-    <video id="localVideo" autoplay muted></video>
-    <video id="remoteVideo" autoplay></video>
-
-    <script src="/socket.io/socket.io.js"></script>
+    <div id="app">
+      <video id="localVideo" autoplay muted></video>
+      <video id="remoteVideo" autoplay></video>
+      <button id="startButton">Start</button>
+      <button id="callButton">Call</button>
+      <button id="hangupButton">Hang Up</button>
+    </div>
     <script>
-      const socket = io();
       const localVideo = document.getElementById("localVideo");
       const remoteVideo = document.getElementById("remoteVideo");
+      const startButton = document.getElementById("startButton");
+      const callButton = document.getElementById("callButton");
+      const hangupButton = document.getElementById("hangupButton");
 
-      // Set up a local media stream
-      navigator.mediaDevices
-        .getUserMedia({ video: true, audio: true })
-        .then((stream) => {
-          localVideo.srcObject = stream;
+      let localStream;
+      let remoteStream;
+      let peerConnection;
 
-          // Set up a RTCPeerConnection
-          const pc = new RTCPeerConnection();
-          pc.onicecandidate = handleIceCandidate;
-          pc.ontrack = handleTrackEvent;
+      startButton.addEventListener("click", start);
+      callButton.addEventListener("click", call);
+      hangupButton.addEventListener("click", hangup);
 
-          // Add local stream to the peer connection
-          stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+      async function start() {
+        const constraints = {
+          video: true,
+          audio: true,
+        };
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        localVideo.srcObject = localStream;
+      }
 
-          // Signaling logic
-          pc.onnegotiationneeded = () => {
-            if (pc.signalingState !== "stable") return;
-            pc.createOffer()
-              .then((offer) => pc.setLocalDescription(offer))
-              .then(() => {
-                socket.emit("offer", {
-                  room: "1",
-                  target: "otherUser",
-                  sdp: pc.localDescription,
-                });
-              });
-          };
+      function call() {
+        callButton.disabled = true;
+        hangupButton.disabled = false;
 
-          // Connection handling
-          socket.on("offer", (data) => {
-            if (data.room === "1" && data.sender !== socket.id) {
-              pc.setRemoteDescription(data.sdp)
-                .then(() => pc.createAnswer())
-                .then((answer) => pc.setLocalDescription(answer))
-                .then(() => {
-                  socket.emit("answer", {
-                    room: "1",
-                    target: data.sender,
-                    sdp: pc.localDescription,
-                  });
-                });
-            }
-          });
+        const configuration = {
+          iceServers: [
+            {
+              urls: "stun:stun.l.google.com:19302",
+            },
+          ],
+        };
 
-          socket.on("answer", (data) => {
-            if (data.room === "1" && data.sender !== socket.id) {
-              pc.setRemoteDescription(data.sdp);
-            }
-          });
+        peerConnection = new RTCPeerConnection(configuration);
 
-          socket.on("candidate", (data) => {
-            if (data.room === "1" && data.sender !== socket.id) {
-              const candidate = new RTCIceCandidate(data.candidate);
-              pc.addIceCandidate(candidate);
-            }
-          });
+        peerConnection.addEventListener("icecandidate", handleIceCandidate);
+        peerConnection.addEventListener("track", handleRemoteStream);
+
+        localStream.getTracks().forEach((track) => {
+          peerConnection.addTrack(track, localStream);
         });
 
-      // Helper functions
+        peerConnection
+          .createOffer()
+          .then((offer) => {
+            return peerConnection.setLocalDescription(offer);
+          })
+          .then(() => {
+            // send the offer to the remote peer
+          })
+          .catch((error) => {
+            console.error("Failed to create session description:", error);
+          });
+      }
+
       function handleIceCandidate(event) {
         if (event.candidate) {
-          socket.emit("candidate", {
-            room: "1",
-            target: "otherUser",
-            candidate: event.candidate,
-          });
+          // send the candidate to the remote peer
         }
       }
 
-      function handleTrackEvent(event) {
+      function handleRemoteStream(event) {
         remoteVideo.srcObject = event.streams[0];
+      }
+
+      function hangup() {
+        remoteStream.getTracks().forEach((track) => {
+          track.stop();
+        });
+        localStream.getTracks().forEach((track) => {
+          track.stop();
+        });
+        peerConnection.close();
+        peerConnection = null;
+        callButton.disabled = false;
+        hangupButton.disabled = true;
       }
     </script>
   </body>
